@@ -1,0 +1,320 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "environment": {
+            "type": "string",
+            "metadata": {
+                "description": "Unique name for environment resource."
+            },
+            "minLength": 3,
+            "maxLength": 10
+        },
+        "location": {
+            "type": "string",
+            "defaultValue": "[resourceGroup().location]",
+            "metadata": {
+                "description": "Location for resources"
+            }
+        },
+        "storageType": {
+            "type": "string",
+            "defaultValue": "Standard_RAGRS",
+            "metadata": {
+                "description": "Storage Account type"
+            }
+        },
+        "tenantId": {
+            "type": "string",
+            "defaultValue": "[subscription().tenantId]",
+            "metadata": {
+                "description": "Specifies the Azure Active Directory tenant ID that should be used for authenticating requests to the key vault. Get it by using Get-AzSubscription cmdlet."
+            }
+        },
+        "objectId": {
+            "type": "string",
+            "defaultValue": "Pass objectId",
+            "metadata": {
+                "description": "Specifies the object ID of a user, service principal or security group in the Azure Active Directory tenant for the vault. The object ID must be unique for the list of access policies. Get it by using Get-AzADUser or Get-AzADServicePrincipal cmdlets."
+            }
+        },
+        "sqlServerAdminUsername": {
+            "type": "string",
+            "defaultValue": "Pass admin username",
+            "metadata": {
+                "description": "The administrator username of the SQL logical server."
+            }
+        },
+        "sqlServerAdminPassword": {
+            "type": "securestring",
+            "defaultValue": "Password for admin",
+            "metadata": {
+                "description": "The administrator password of the SQL logical server."
+            }
+        },
+        "linuxAdminUsername": {
+            "type": "string",
+            "defaultValue": "UserName",
+            "metadata": {
+                "description": "User name for the Linux Virtual Machines."
+            }
+        },
+        "sshRSAPublicKey": {
+            "type": "string",
+            "metadata": {
+                "description": "Configure all linux machines with the SSH RSA public key string. Your key should include three parts, for example 'ssh-rsa AAAAB...snip...UcyupgH azureuser@linuxvm'"
+            }
+        }
+    },
+    "functions": [],
+    "variables": { 
+        "tenantId": "[parameters('tenantId')]",
+        "objectId": "[parameters('objectId')]",
+
+        "environmentName": "[parameters('environment')]",
+        "applicationName": "notejam4fun",
+
+        "resourceLocation": "[parameters('location')]",
+
+        "storageAccountType": "[parameters('storageType')]",
+        "storageAccountName": "[toLower(concat(variables('applicationName'), variables('environmentName'), 'stg'))]",
+
+        "keyVaultAccountName": "[toLower(concat(variables('applicationName'), variables('environmentName'), 'kv'))]",
+        "keyVaultSecretName": "[toLower(concat(variables('keyVaultAccountName'), '/', 'connectionstring'))]",
+
+        "sqlServerAccountName":  "[toLower(concat(variables('applicationName'), variables('environmentName'), 'sqlserv'))]",
+        "sqlServerAdminUsername": "[parameters('sqlServerAdminUsername')]",
+        "sqlServerAdminPassword": "[parameters('sqlServerAdminPassword')]",
+
+        "azureKubernetsService": "[toLower(concat(variables('applicationName'), variables('environmentName'), 'k8s'))]",
+
+        "webAppService": "[toLower(concat(variables('applicationName'), variables('environmentName'), 'webapp'))]",
+        "serverFarmService": "[toLower(concat(variables('applicationName'), variables('environmentName'), 'servfarm'))]"
+    },
+    "resources": [{
+        "name": "[variables('storageAccountName')]",
+        "type": "Microsoft.Storage/storageAccounts",
+        "location": "[variables('resourceLocation')]",
+        "apiVersion": "2019-06-01",
+        "tags": {
+            "type": "storage",
+            "application": "[variables('applicationName')]",
+            "displayName": "[variables('environmentName')]"
+        },
+        "kind": "StorageV2",
+        "sku": {
+            "name": "[variables('storageAccountType')]",
+            "tier": "Standard"
+        },
+        "properties": {
+            "minimumTlsVersion": "TLS1_2",
+            "allowBlobPublicAccess": false,
+            "networkAcls": {
+                "bypass": "AzureServices",
+                "virtualNetworkRules": [],
+                "ipRules": [],
+                "defaultAction": "Allow"
+            },
+            "supportsHttpsTrafficOnly": true,
+            "encryption": {
+                "services": {
+                    "file": {
+                        "keyType": "Account",
+                        "enabled": true
+                    },
+                    "blob": {
+                        "keyType": "Account",
+                        "enabled": true
+                    }
+                },
+                "keySource": "Microsoft.Storage"
+            },
+            "accessTier": "Hot"
+        }
+    },
+    {
+        "name": "[variables('keyVaultAccountName')]",
+        "type": "Microsoft.KeyVault/vaults",
+        "apiVersion": "2016-10-01",
+        "location": "[variables('resourceLocation')]",
+        "tags": {
+            "type": "keyvault",
+            "application": "[variables('applicationName')]",
+            "displayName": "[variables('environmentName')]"
+        },
+        "properties": {
+            "enabledForDeployment": true,
+            "enabledForTemplateDeployment": true,
+            "enabledForDiskEncryption": true,
+            "enableSoftDelete": true,
+            "tenantId": "[variables('tenantId')]",
+            "accessPolicies": [
+                {
+                    "tenantId": "[variables('tenantId')]",
+                    "objectId": "[variables('objectId')]",
+                    "permissions": {
+                        "keys": [
+                            "Get"
+                        ],
+                        "secrets": [
+                            "List",
+                            "Get",
+                            "Set",
+                            "Delete",
+                            "Recover",
+                            "Backup",
+                            "Restore"
+                        ]
+                    }
+                }
+            ],
+            "sku": {
+                "name": "standard",
+                "family": "A"
+            }
+        },
+        "resources": [
+            {
+                "type": "Microsoft.KeyVault/vaults/secrets",
+                "name": "[variables('keyVaultSecretName')]",
+                "apiVersion": "2016-10-01",
+                "dependsOn": [
+                    "[resourceId('Microsoft.KeyVault/vaults', variables('keyVaultAccountName'))]"
+                ],
+                "properties": {
+                    "value": "secretValue"
+                }
+            }
+        ]
+    },
+    {
+        "name": "[variables('sqlServerAccountName')]",
+        "type": "Microsoft.Sql/servers",
+        "apiVersion": "2014-04-01",
+        "location": "[variables('resourceLocation')]",
+        "tags": {
+            "type": "sqlServer",
+            "application": "[variables('applicationName')]",
+            "displayName": "[variables('environmentName')]"
+        },
+        "properties": {
+            "administratorLogin": "[variables('sqlServerAdminUsername')]",
+            "administratorLoginPassword": "[variables('sqlServerAdminPassword')]",
+            "version": "12.0",
+            "minimalTlsVersion": "1.2",
+            "publicNetworkAccess": "Enabled"
+        }
+    },
+    {
+        "name": "concat([variables('sqlServerAccountName')],'/',[variables('applicationName')]",
+        "type": "Microsoft.Sql/servers/databases",
+        "apiVersion": "2014-04-01",
+        "location": "[variables('resourceLocation')]",
+        "tags": {
+            "type": "sqlDatabase",
+            "application": "[variables('applicationName')]",
+            "displayName": "[variables('environmentName')]"
+        },
+        "dependsOn": [
+            "[resourceId('Microsoft.Sql/servers', variables('sqlServerAccountName'))]"
+        ],
+        "sku": {
+            "name": "Basic",
+            "tier": "Basic",
+            "capacity": 5
+        },
+        "properties": {
+            "collation": "SQL_Latin1_General_CP1_CI_AS",
+            "edition": "Basic",
+            "maxSizeBytes": "1073741824",
+            "requestedServiceObjectiveName": "Basic",
+            "storageAccountType": "GRS"
+        }
+    },
+    {
+        "name": "[variables('azureKubernetsService')]",
+        "type": "Microsoft.ContainerService/managedClusters",
+        "apiVersion": "2020-02-01",
+        "location": "[variables('resourceLocation')]",
+        "tags": {
+            "type": "k8sservice",
+            "application": "[variables('applicationName')]",
+            "displayName": "[variables('environmentName')]"
+        },
+        "properties": {
+            "kubernetesVersion": "1.17.13",
+            "dnsPrefix": "[variables('applicationName')]",
+            "agentPoolProfiles": [
+                {
+                    "name": "agentpool",
+                    "count": 1,
+                    "vmSize": "Standard_DS2_v2",
+                    "osDiskSizeGB": 128,
+                    "osDiskType": "Managed",
+                    "maxPods": 110,
+                    "type": "VirtualMachineScaleSets",
+                    "availabilityZones": [
+                        "1"
+                    ],
+                    "orchestratorVersion": "1.17.13",
+                    "nodeLabels": {},
+                    "mode": "System",
+                    "osType": "Linux",
+                    "storageProfile": "ManagedDisks"
+                }
+            ],
+            "linuxProfile": {
+                "adminUsername": "[parameters('linuxAdminUsername')]",
+                "ssh": {
+                    "publicKeys": [
+                        {
+                            "keyData": "[parameters('sshRSAPublicKey')]"
+                        }
+                    ]
+                }
+            }
+        },
+        "identity": {
+            "type": "SystemAssigned"
+        }
+    },
+    {
+        "name": "[variables('serverFarmService')]",
+        "type": "Microsoft.Web/serverfarms",
+        "apiVersion": "2018-02-01",
+        "location": "[variables('resourceLocation')]",
+        "kind": "linux",
+        "sku": {
+            "name": "F1",
+            "capacity": 1
+        },
+        "tags": {
+            "type": "serverfarm",
+            "application": "[variables('applicationName')]",
+            "displayName": "[variables('environmentName')]"
+        },
+        "properties": {
+            "name": "[variables('serverFarmService')]"
+        }
+    },
+    {
+        "name": "[variables('webAppService')]",
+        "type": "Microsoft.Web/sites",
+        "apiVersion": "2018-11-01",
+        "location": "[variables('resourceLocation')]",
+        "tags": {
+            "[concat('hidden-related:', resourceGroup().id, concat('/providers/Microsoft.Web/serverfarms/', variables('webAppService')))]": "Resource",
+            "type": "webApp",
+            "application": "[variables('applicationName')]",
+            "displayName": "[variables('environmentName')]"
+        },
+        "dependsOn": [
+            "[resourceId('Microsoft.Web/serverfarms', variables('serverFarmService'))]"
+        ],
+        "properties": {
+            "name": "[variables('webAppService')]",
+            "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', variables('serverFarmService'))]"
+        }
+    }],
+    "outputs": {}
+}
